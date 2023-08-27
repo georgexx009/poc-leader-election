@@ -7,26 +7,32 @@ interface INode {
 
 export type StatusCode = 200 | 201 | 400 | 401 | 403 | 404 | 500 | 503
 
-export interface IResponse<Body = never> {
+export interface IResponse {
   ok: boolean
-  body: Body
+  body?: string // stringify json
   statusCode: StatusCode
 }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
-export interface IRequest<Body = never> {
+export interface IRequest {
   url: string
   httpMethod: HttpMethod
-  body: Body
+  body?: string // stringify json
   headers?: Record<string, string>
 }
 
 export class Network {
   // key is the URL
- private registeredNodes: Record<string, INode> = {}
+  private registeredNodes: Record<string, INode> = {}
 
-  private async sleep(ms: number = 1000) {
+  // log network traffic
+  private log({ req, res, sender }: { req: IRequest, res?: IResponse, sender: string, status: 'request send' | 'response send' }) {
+    console.log('--------------------------------------')
+    console.log(`${sender} -> ${req.url}`)
+  }
+
+  private async latency(ms: number = 1000) {
     return new Promise(resolve => setTimeout(resolve, ms))
   }
 
@@ -34,15 +40,19 @@ export class Network {
     this.registeredNodes[url] = node
   }
 
-  async send<ReqBody, ResBody>(req: IRequest<ReqBody>): Promise<IResponse<ResBody>> {
-    await this.sleep()
-    if (!this.registeredNodes?.[req.url]) {
+  // sender param is for debugging purposes
+  async send(req: IRequest, sender = 'unknown'): Promise<IResponse> {
+    this.log({ req, sender, status: 'request send' })
+    await this.latency()
+    if (!this.registeredNodes[req.url]) {
       return {
         ok: false,
         statusCode: 503,
       }
     }
 
-    return this.registeredNodes[req.url].receiveRequest(req)
+    const res = await this.registeredNodes[req.url].receiveRequest(req)
+    this.log({ req, res, sender, status: 'response send' })
+    return res
   }
 }

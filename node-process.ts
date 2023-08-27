@@ -1,5 +1,5 @@
-import { BaseNode } from 'base-node'
-import { IRequest, IResponse, Network } from 'network'
+import { BaseNode } from './base-node'
+import { IRequest, IResponse, Network } from './network'
 
 type processState = 'follower' | 'candidate' | 'leader'
 
@@ -24,7 +24,7 @@ export class NodeProcess extends BaseNode {
   private electionTerm = 0
   private heartBeatReceived = false
   private TIME_BETWEEN_HEARTBEATS = 4
-  private HEART_BEAT_TIMEOUT = 10 // sec
+  private HEART_BEAT_TIMEOUT = 1 // sec
   private otherProccesses: string[] = []
   private electionData: IElectionData = {
     votes: {}, // TODO - need to refactor because these are the votes for this node
@@ -40,8 +40,9 @@ export class NodeProcess extends BaseNode {
 
   // this is for timeouts, not to simulate latency
   private async sleep(s: number = 1) {
-    const ms = s * 1000
-    return new Promise(resolve => setTimeout(resolve, ms))
+    const ms = s * 100
+    console.log('starting sleep', ms)
+    return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   run(processes: string[]) {
@@ -59,6 +60,7 @@ export class NodeProcess extends BaseNode {
   private async initHearbeatListener() {
     while (this.state !== 'leader') {
       await this.sleep(this.HEART_BEAT_TIMEOUT)
+      console.log('timeout')
       if (this.electionData.inProgess) return
 
         if (!this.heartBeatReceived) {
@@ -72,14 +74,16 @@ export class NodeProcess extends BaseNode {
   private async initHeartbeatProducer() {
     while (this.state === 'leader') {
       for (const p of this.otherProccesses) {
-        // TODO - send the requets through network
-        await p.receiveHeartBeat()
+        await this.sendRequest({
+          url: p + '/heartbeat',
+          httpMethod: 'GET'
+        })
       }
       await this.sleep(this.TIME_BETWEEN_HEARTBEATS)
     }
   }
 
-  async receiveHeartBeat(): Promise<IResponse> {
+  private async receiveHeartBeat(): Promise<IResponse> {
     await this.sleep()
 
     // if was false and I was a candidate then means a new leader is set
@@ -97,15 +101,23 @@ export class NodeProcess extends BaseNode {
     }
   }
 
-  async receiveVoteRequest(req: IRequest<IReceiveVoteRequest>): Promise<IResponse<IReceiveVoteResponse>> {
+  private async receiveVoteRequest(req: IRequest): Promise<IResponse> {
     await this.sleep()
-    const votedResult = this.voteFor(req.body.voteFor, req.body.electionTerm)
+    if (!req.body) {
+      return {
+        ok: false,
+        statusCode: 400
+      }
+    }
+    const body = this.parseReqBody<IReceiveVoteRequest>(req.body)
+    const votedResult = this.voteFor(body.voteFor, body.electionTerm)
+    const responseBody = JSON.stringify({
+      votedForYou: votedResult
+    })
     return {
       ok: true,
       statusCode: 200,
-      body: {
-        votedForYou: votedResult
-      }
+      body: responseBody
     }
   }
 
@@ -129,11 +141,11 @@ export class NodeProcess extends BaseNode {
         electionTerm: this.electionTerm,
         voteFor: this.name
       }
-      return this.sendRequest<IReceiveVoteRequest>({
+      return this.sendRequest({
         url: `${url}/vote`,
         httpMethod: 'POST',
-        body
-      });
+        body: JSON.stringify(body)
+      })
     })
 
     // check if other nodes vote for me
@@ -142,7 +154,12 @@ export class NodeProcess extends BaseNode {
       if (voteResult.status === 'rejected') {
         continue
       }
-      const votedForYou = voteResult.value.body?.votedForYou ?? false;
+      if (!voteResult.value.body) {
+        continue
+      }
+      const body = this.parseReqBody<IReceiveVoteResponse>(voteResult.value.body)
+      // TODO - change it for ??
+      const votedForYou = body.votedForYou || false;
       if (!votedForYou) {
         // didn't vote for me
         continue
